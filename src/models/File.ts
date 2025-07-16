@@ -1,0 +1,213 @@
+import mongoose, { Schema, Document } from 'mongoose';
+import User from './User';
+import { IFile } from '../types';
+
+export interface IFileDocument extends IFile, Document {
+  updateDownloadCount(): Promise<void>;
+  isExpired(): boolean;
+  canDownload(): boolean;
+  getPublicUrl(): string;
+}
+
+const fileSchema = new Schema<IFileDocument>({
+  name: {
+    type: String,
+    required: [true, 'File name is required'],
+    trim: true
+  },
+  originalName: {
+    type: String,
+    required: [true, 'Original file name is required'],
+    trim: true
+  },
+  mimeType: {
+    type: String,
+    required: [true, 'MIME type is required']
+  },
+  size: {
+    type: Number,
+    required: [true, 'File size is required'],
+    min: [0, 'File size cannot be negative']
+  },
+  path: {
+    type: String,
+    required: [true, 'File path is required']
+  },
+  hash: {
+    type: String,
+    required: [true, 'File hash is required'],
+    unique: true
+  },
+  owner: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'File owner is required']
+  },
+  folder: {
+    type: Schema.Types.ObjectId,
+    ref: 'Folder'
+  },
+  tags: [{
+    type: String,
+    trim: true
+  }],
+  metadata: {
+    width: Number,
+    height: Number,
+    duration: Number,
+    bitrate: Number,
+    codec: String
+  },
+  permissions: {
+    public: {
+      type: Boolean,
+      default: false
+    },
+    password: {
+      type: String,
+      select: false
+    },
+    expiresAt: {
+      type: Date
+    },
+    maxDownloads: {
+      type: Number,
+      min: [0, 'Max downloads cannot be negative']
+    },
+    downloadCount: {
+      type: Number,
+      default: 0,
+      min: [0, 'Download count cannot be negative']
+    }
+  },
+  aiAnalysis: {
+    category: {
+      type: String,
+      enum: ['image', 'video', 'audio', 'document', 'archive', 'other']
+    },
+    tags: [String],
+    description: String,
+    confidence: {
+      type: Number,
+      min: [0, 'Confidence cannot be negative'],
+      max: [1, 'Confidence cannot exceed 1']
+    }
+  }
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// Indexes
+fileSchema.index({ owner: 1 });
+fileSchema.index({ folder: 1 });
+fileSchema.index({ tags: 1 });
+fileSchema.index({ 'permissions.public': 1 });
+fileSchema.index({ createdAt: -1 });
+fileSchema.index({ name: 'text', originalName: 'text' });
+
+// Virtual for file extension
+fileSchema.virtual('extension').get(function() {
+  return this.originalName.split('.').pop()?.toLowerCase();
+});
+
+// Virtual for formatted size
+fileSchema.virtual('formattedSize').get(function() {
+  const bytes = this.size;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  if (bytes === 0) return '0 Bytes';
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+});
+
+// Virtual for is image
+fileSchema.virtual('isImage').get(function() {
+  return this.mimeType.startsWith('image/');
+});
+
+// Virtual for is video
+fileSchema.virtual('isVideo').get(function() {
+  return this.mimeType.startsWith('video/');
+});
+
+// Virtual for is audio
+fileSchema.virtual('isAudio').get(function() {
+  return this.mimeType.startsWith('audio/');
+});
+
+// Virtual for is document
+fileSchema.virtual('isDocument').get(function() {
+  const documentTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+    'text/html',
+    'text/css',
+    'text/javascript',
+    'application/json',
+    'application/xml'
+  ];
+  return documentTypes.includes(this.mimeType);
+});
+
+// Method to update download count
+fileSchema.methods.updateDownloadCount = async function(): Promise<void> {
+  this.permissions.downloadCount += 1;
+  await this.save();
+};
+
+// Method to check if file is expired
+fileSchema.methods.isExpired = function(): boolean {
+  if (!this.permissions.expiresAt) return false;
+  return new Date() > this.permissions.expiresAt;
+};
+
+// Method to check if file can be downloaded
+fileSchema.methods.canDownload = function(): boolean {
+  if (this.isExpired()) return false;
+  if (this.permissions.maxDownloads && this.permissions.downloadCount >= this.permissions.maxDownloads) {
+    return false;
+  }
+  return true;
+};
+
+// Method to get public URL
+fileSchema.methods.getPublicUrl = function(): string {
+  return `${process.env.BACKEND_URL}/api/download/${this._id}`;
+};
+
+// Pre-save middleware to update user storage
+fileSchema.pre('save', async function(next) {
+  if (this.isNew) {
+    try {
+      await User.findByIdAndUpdate(
+        this.owner,
+        { $inc: { 'storage.used': this.size } }
+      );
+    } catch (error) {
+      next(error as Error);
+    }
+  }
+  next();
+});
+
+// Pre-remove middleware to update user storage
+fileSchema.pre('remove', async function(next) {
+  try {
+    await User.findByIdAndUpdate(
+      this.owner,
+      { $inc: { 'storage.used': -this.size } }
+    );
+  } catch (error) {
+    next(error as Error);
+  }
+  next();
+});
+
+export default mongoose.model<IFileDocument>('File', fileSchema); 
