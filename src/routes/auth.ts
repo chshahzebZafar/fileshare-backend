@@ -4,6 +4,7 @@ import User from '../models/User';
 import { authenticate, asyncHandler } from '../middleware/auth';
 import { errorHandler } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
+import emailService from '../utils/email';
 
 const router = express.Router();
 
@@ -66,11 +67,12 @@ const validatePasswordUpdate = [
 router.post('/register', validateRegistration, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { email, username, password, firstName, lastName } = req.body;
@@ -81,12 +83,13 @@ router.post('/register', validateRegistration, asyncHandler(async (req, res) => 
   });
 
   if (existingUser) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: existingUser.email === email 
         ? 'Email already registered' 
         : 'Username already taken'
     });
+    return;
   }
 
   // Create new user
@@ -104,8 +107,13 @@ router.post('/register', validateRegistration, asyncHandler(async (req, res) => 
   const verificationToken = user.generateEmailVerificationToken();
   await user.save();
 
-  // TODO: Send verification email
-  console.log('Verification token:', verificationToken);
+  // Send verification email
+  try {
+    await emailService.sendVerificationEmail(email, verificationToken, username);
+  } catch (error) {
+    console.error('Failed to send verification email:', error);
+    // Don't fail registration if email fails, just log it
+  }
 
   // Generate auth token
   const token = user.generateAuthToken();
@@ -135,11 +143,12 @@ router.post('/register', validateRegistration, asyncHandler(async (req, res) => 
 router.post('/login', validateLogin, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { email, password } = req.body;
@@ -147,19 +156,21 @@ router.post('/login', validateLogin, asyncHandler(async (req, res) => {
   // Find user by email
   const user = await User.findOne({ email }).select('+password');
   if (!user) {
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       message: 'Invalid credentials'
     });
+    return;
   }
 
   // Check password
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    return res.status(401).json({
+    res.status(401).json({
       success: false,
       message: 'Invalid credentials'
     });
+    return;
   }
 
   // Generate auth token
@@ -216,11 +227,12 @@ router.get('/me', authenticate, asyncHandler(async (req: AuthRequest, res) => {
 router.post('/forgot-password', validatePasswordReset, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { email } = req.body;
@@ -228,18 +240,24 @@ router.post('/forgot-password', validatePasswordReset, asyncHandler(async (req, 
   const user = await User.findOne({ email });
   if (!user) {
     // Don't reveal if email exists or not
-    return res.json({
+    res.json({
       success: true,
       message: 'If an account with that email exists, a password reset link has been sent.'
     });
+    return;
   }
 
   // Generate reset token
   const resetToken = user.generatePasswordResetToken();
   await user.save();
 
-  // TODO: Send reset email
-  console.log('Reset token:', resetToken);
+  // Send reset email
+  try {
+    await emailService.sendPasswordResetEmail(email, resetToken, user.username);
+  } catch (error) {
+    console.error('Failed to send password reset email:', error);
+    // Don't fail the request if email fails, just log it
+  }
 
   res.json({
     success: true,
@@ -253,11 +271,12 @@ router.post('/forgot-password', validatePasswordReset, asyncHandler(async (req, 
 router.post('/reset-password', validatePasswordUpdate, asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { token, password } = req.body;
@@ -268,10 +287,11 @@ router.post('/reset-password', validatePasswordUpdate, asyncHandler(async (req, 
   }).select('+resetPasswordToken +resetPasswordExpires');
 
   if (!user) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Invalid or expired reset token'
     });
+    return;
   }
 
   // Update password
@@ -290,21 +310,23 @@ router.post('/reset-password', validatePasswordUpdate, asyncHandler(async (req, 
 // @desc    Verify email with token
 // @access  Public
 router.post('/verify-email', asyncHandler(async (req, res) => {
-  const { token } = req.body;
-
+  const { token } = req.query;
+  console.log(token, "token");
   if (!token) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Verification token is required'
     });
+    return;
   }
 
   const user = await User.findOne({ emailVerificationToken: token });
   if (!user) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Invalid verification token'
     });
+    return;
   }
 
   user.isEmailVerified = true;
@@ -322,17 +344,37 @@ router.post('/verify-email', asyncHandler(async (req, res) => {
 // @access  Private
 router.post('/resend-verification', authenticate, asyncHandler(async (req: AuthRequest, res) => {
   if (req.user!.isEmailVerified) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Email is already verified'
     });
+    return;
   }
 
-  const verificationToken = req.user!.generateEmailVerificationToken();
-  await req.user!.save();
+  // Get fresh user data with email verification token
+  const user = await User.findById(req.user!._id);
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
 
-  // TODO: Send verification email
-  console.log('New verification token:', verificationToken);
+  const verificationToken = user.generateEmailVerificationToken();
+  await user.save();
+
+  // Send verification email
+  try {
+    await emailService.sendVerificationEmail(user.email, verificationToken, user.username);
+  } catch (error) {
+    console.error('Failed to send verification email:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send verification email. Please try again later.'
+    });
+    return;
+  }
 
   res.json({
     success: true,
@@ -348,10 +390,11 @@ router.put('/profile', authenticate, asyncHandler(async (req: AuthRequest, res) 
 
   const user = await User.findById(req.user!._id);
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   if (firstName !== undefined) user.firstName = firstName;
@@ -388,10 +431,11 @@ router.put('/settings', authenticate, asyncHandler(async (req: AuthRequest, res)
 
   const user = await User.findById(req.user!._id);
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   if (theme !== undefined) user.settings.theme = theme;

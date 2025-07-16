@@ -11,6 +11,11 @@
     "test": "node test-runner.js",
     "test:integration": "node tests/integration.test.js",
     "test:api": "node test-runner.js",
+    "test:email": "npm run build && node test-email.js",
+    "test:email:dev": "ts-node src/utils/email.ts && node test-email.js",
+    "test:email:simple": "node test-email-simple.js",
+    "test:email:endpoints": "node test-email-endpoints.js",
+    "setup:email": "node setup-email-config.js",
     "clean": "rimraf dist",
     "prebuild": "npm run clean"
   },
@@ -26,6 +31,7 @@
   "author": "Your Name",
   "license": "MIT",
   "dependencies": {
+    "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cors": "^2.8.5",

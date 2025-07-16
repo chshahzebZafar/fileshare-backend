@@ -35,8 +35,7 @@ const fileSchema = new Schema<IFileDocument>({
   },
   hash: {
     type: String,
-    required: [true, 'File hash is required'],
-    unique: true
+    required: [true, 'File hash is required']
   },
   owner: {
     type: Schema.Types.ObjectId,
@@ -106,6 +105,7 @@ fileSchema.index({ tags: 1 });
 fileSchema.index({ 'permissions.public': 1 });
 fileSchema.index({ createdAt: -1 });
 fileSchema.index({ name: 'text', originalName: 'text' });
+fileSchema.index({ hash: 1, owner: 1 }, { unique: true }); // Added compound unique index
 
 // Virtual for file extension
 fileSchema.virtual('extension').get(function() {
@@ -197,8 +197,8 @@ fileSchema.pre('save', async function(next) {
   next();
 });
 
-// Pre-remove middleware to update user storage
-fileSchema.pre('remove', async function(next) {
+// Pre-deleteOne middleware to update user storage
+fileSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
   try {
     await User.findByIdAndUpdate(
       this.owner,
@@ -209,5 +209,24 @@ fileSchema.pre('remove', async function(next) {
   }
   next();
 });
+
+// Collection (Bundle) model for grouping files
+export interface ICollectionDocument extends Document {
+  name: string;
+  owner: mongoose.Types.ObjectId;
+  files: mongoose.Types.ObjectId[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const collectionSchema = new Schema<ICollectionDocument>({
+  name: { type: String, required: true, trim: true },
+  owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  files: [{ type: Schema.Types.ObjectId, ref: 'File', required: true }],
+}, {
+  timestamps: true
+});
+
+export const Collection = mongoose.model<ICollectionDocument>('Collection', collectionSchema);
 
 export default mongoose.model<IFileDocument>('File', fileSchema); 

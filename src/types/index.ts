@@ -2,7 +2,7 @@ import { Request } from 'express';
 
 // User related types
 export interface IUser {
-  _id: string;
+  _id?: string;
   email: string;
   username: string;
   password: string;
@@ -38,7 +38,7 @@ export interface IUser {
 
 // File related types
 export interface IFile {
-  _id: string;
+  _id?: string;
   name: string;
   originalName: string;
   mimeType: string;
@@ -74,7 +74,7 @@ export interface IFile {
 
 // Folder related types
 export interface IFolder {
-  _id: string;
+  _id?: string;
   name: string;
   description?: string;
   owner: string | IUser;
@@ -92,9 +92,10 @@ export interface IFolder {
 
 // Share related types
 export interface IShare {
-  _id: string;
-  type: 'file' | 'folder';
+  _id?: string;
+  type: 'file' | 'folder' | 'collection';
   resource: string | IFile | IFolder;
+  resourceModel?: 'File' | 'Folder' | 'Collection';
   owner: string | IUser;
   access: {
     type: 'public' | 'password' | 'email';
@@ -115,7 +116,7 @@ export interface IShare {
 
 // Comment related types
 export interface IComment {
-  _id: string;
+  _id?: string;
   content: string;
   author: string | IUser;
   file?: string | IFile;
@@ -128,15 +129,15 @@ export interface IComment {
 
 // Analytics related types
 export interface IAnalytics {
-  _id: string;
+  _id?: string;
   user: string | IUser;
   type: 'file_upload' | 'file_download' | 'file_share' | 'folder_create' | 'login';
-  data: Record<string, any>;
+  data: Record<string, unknown>;
   timestamp: Date;
 }
 
 // API Response types
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   success: boolean;
   message: string;
   data?: T;

@@ -10,7 +10,7 @@ export interface IShareDocument extends IShare, Document {
 const shareSchema = new Schema<IShareDocument>({
   type: {
     type: String,
-    enum: ['file', 'folder'],
+    enum: ['file', 'folder', 'collection'],
     required: [true, 'Share type is required']
   },
   resource: {
@@ -20,7 +20,7 @@ const shareSchema = new Schema<IShareDocument>({
   },
   resourceModel: {
     type: String,
-    enum: ['File', 'Folder'],
+    enum: ['File', 'Folder', 'Collection'],
     required: [true, 'Resource model is required']
   },
   owner: {
@@ -114,6 +114,8 @@ shareSchema.pre('save', function(next) {
     this.resourceModel = 'File';
   } else if (this.type === 'folder') {
     this.resourceModel = 'Folder';
+  } else if (this.type === 'collection') {
+    this.resourceModel = 'Collection';
   }
   next();
 });

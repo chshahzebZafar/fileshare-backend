@@ -1,13 +1,14 @@
 import express from 'express';
+import fs from 'fs';
 import { query, validationResult } from 'express-validator';
 import File from '../models/File';
+import Folder from '../models/Folder';
 import { authenticate } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
 
 const router = express.Router();
 
-// Validation middleware
 const validateFileQuery = [
   query('page')
     .optional()
@@ -52,10 +53,10 @@ router.get('/', authenticate, validateFileQuery, asyncHandler(async (req: AuthRe
   } = req.query;
 
   const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
-  const sort: any = { [sortBy as string]: sortOrder === 'desc' ? -1 : 1 };
+  const sort: Record<string, 1 | -1> = { [sortBy as string]: sortOrder === 'desc' ? -1 : 1 };
 
   // Build query
-  const query: any = { owner: req.user!._id };
+  const query: Record<string, unknown> = { owner: req.user!._id };
 
   if (folder) {
     query.folder = folder;
@@ -92,10 +93,11 @@ router.get('/', authenticate, validateFileQuery, asyncHandler(async (req: AuthRe
   }
 
   if (search) {
+    const searchString = Array.isArray(search) ? search[0] : search;
     query.$or = [
-      { name: { $regex: search, $options: 'i' } },
-      { originalName: { $regex: search, $options: 'i' } },
-      { tags: { $in: [new RegExp(search, 'i')] } }
+      { name: { $regex: searchString, $options: 'i' } },
+      { originalName: { $regex: searchString, $options: 'i' } },
+      { tags: { $in: [new RegExp(searchString, 'i')] } }
     ];
   }
 
@@ -198,13 +200,12 @@ router.delete('/:fileId', authenticate, asyncHandler(async (req: AuthRequest, re
   }
 
   // Delete file from disk
-  const fs = require('fs');
   if (fs.existsSync(file.path)) {
     fs.unlinkSync(file.path);
   }
 
   // Delete from database
-  await file.remove();
+  await file.deleteOne();
 
   res.json({
     success: true,
@@ -234,19 +235,15 @@ router.post('/bulk-delete', authenticate, asyncHandler(async (req: AuthRequest, 
     });
   }
 
-  const fs = require('fs');
   const deletedFiles = [];
   const errors = [];
 
   for (const file of files) {
     try {
-      // Delete file from disk
       if (fs.existsSync(file.path)) {
         fs.unlinkSync(file.path);
       }
-
-      // Delete from database
-      await file.remove();
+      await file.deleteOne();
       deletedFiles.push(file._id);
     } catch (error) {
       errors.push({
@@ -281,7 +278,6 @@ router.post('/move', authenticate, asyncHandler(async (req: AuthRequest, res) =>
 
   // Validate folder if provided
   if (folderId) {
-    const Folder = require('../models/Folder');
     const folder = await Folder.findOne({ _id: folderId, owner: req.user!._id });
     if (!folder) {
       return res.status(404).json({

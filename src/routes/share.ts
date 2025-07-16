@@ -3,6 +3,7 @@ import { body, validationResult } from 'express-validator';
 import Share from '../models/Share';
 import File from '../models/File';
 import Folder from '../models/Folder';
+import { Collection } from '../models/File';
 import { authenticate } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
@@ -12,8 +13,8 @@ const router = express.Router();
 // Validation middleware
 const validateShare = [
   body('type')
-    .isIn(['file', 'folder'])
-    .withMessage('Type must be file or folder'),
+    .isIn(['file', 'folder', 'collection'])
+    .withMessage('Type must be file, folder, or collection'),
   body('resourceId')
     .isMongoId()
     .withMessage('Invalid resource ID'),
@@ -69,8 +70,10 @@ router.post('/', authenticate, validateShare, asyncHandler(async (req: AuthReque
   let resource;
   if (type === 'file') {
     resource = await File.findOne({ _id: resourceId, owner: req.user!._id });
-  } else {
+  } else if (type === 'folder') {
     resource = await Folder.findOne({ _id: resourceId, owner: req.user!._id });
+  } else if (type === 'collection') {
+    resource = await Collection.findOne({ _id: resourceId, owner: req.user!._id });
   }
 
   if (!resource) {
@@ -84,6 +87,7 @@ router.post('/', authenticate, validateShare, asyncHandler(async (req: AuthReque
   const share = new Share({
     type,
     resource: resourceId,
+    resourceModel: type === 'file' ? 'File' : type === 'folder' ? 'Folder' : 'Collection',
     owner: req.user!._id,
     access: {
       type: access.type,
@@ -117,7 +121,7 @@ router.post('/', authenticate, validateShare, asyncHandler(async (req: AuthReque
 router.get('/', authenticate, asyncHandler(async (req: AuthRequest, res) => {
   const { type, active } = req.query;
 
-  const query: any = { owner: req.user!._id };
+  const query: Record<string, unknown> = { owner: req.user!._id };
 
   if (type) {
     query.type = type;
@@ -222,7 +226,7 @@ router.delete('/:shareId', authenticate, asyncHandler(async (req: AuthRequest, r
     });
   }
 
-  await share.remove();
+  await share.deleteOne();
 
   res.json({
     success: true,

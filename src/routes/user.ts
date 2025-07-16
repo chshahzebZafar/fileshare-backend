@@ -1,10 +1,10 @@
 import express from 'express';
+import fs from 'fs';
 import { body, validationResult } from 'express-validator';
 import User from '../models/User';
 import File from '../models/File';
 import Folder from '../models/Folder';
-import { authenticate } from '../middleware/auth';
-import { asyncHandler } from '../middleware/errorHandler';
+import { authenticate, asyncHandler } from '../middleware/auth';
 import { AuthRequest } from '../types';
 
 const router = express.Router();
@@ -54,21 +54,23 @@ router.get('/profile', authenticate, asyncHandler(async (req: AuthRequest, res) 
 router.put('/profile', authenticate, validateProfileUpdate, asyncHandler(async (req: AuthRequest, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { firstName, lastName, avatar } = req.body;
 
   const user = await User.findById(req.user!._id);
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   if (firstName !== undefined) user.firstName = firstName;
@@ -90,30 +92,33 @@ router.put('/profile', authenticate, validateProfileUpdate, asyncHandler(async (
 router.put('/password', authenticate, validatePasswordChange, asyncHandler(async (req: AuthRequest, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Validation failed',
       errors: errors.array()
     });
+    return;
   }
 
   const { currentPassword, newPassword } = req.body;
 
   const user = await User.findById(req.user!._id).select('+password');
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   // Verify current password
   const isCurrentPasswordValid = await user.comparePassword(currentPassword);
   if (!isCurrentPasswordValid) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Current password is incorrect'
     });
+    return;
   }
 
   // Update password
@@ -132,9 +137,17 @@ router.put('/password', authenticate, validatePasswordChange, asyncHandler(async
 router.get('/settings', authenticate, asyncHandler(async (req: AuthRequest, res) => {
   const user = await User.findById(req.user!._id).select('settings');
   
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
+  
   res.json({
     success: true,
-    data: { settings: user!.settings }
+    data: { settings: user.settings }
   });
 }));
 
@@ -146,10 +159,11 @@ router.put('/settings', authenticate, asyncHandler(async (req: AuthRequest, res)
 
   const user = await User.findById(req.user!._id);
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   if (theme !== undefined) user.settings.theme = theme;
@@ -175,10 +189,11 @@ router.get('/storage', authenticate, asyncHandler(async (req: AuthRequest, res) 
   const user = await User.findById(req.user!._id).select('storage subscription');
   
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   // Calculate storage usage by type
@@ -284,32 +299,34 @@ router.delete('/account', authenticate, asyncHandler(async (req: AuthRequest, re
   const { password } = req.body;
 
   if (!password) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Password is required to delete account'
     });
+    return;
   }
 
   const user = await User.findById(req.user!._id).select('+password');
   if (!user) {
-    return res.status(404).json({
+    res.status(404).json({
       success: false,
       message: 'User not found'
     });
+    return;
   }
 
   // Verify password
   const isPasswordValid = await user.comparePassword(password);
   if (!isPasswordValid) {
-    return res.status(400).json({
+    res.status(400).json({
       success: false,
       message: 'Password is incorrect'
     });
+    return;
   }
 
   // Delete all user's files from disk
   const files = await File.find({ owner: req.user!._id });
-  const fs = require('fs');
   
   for (const file of files) {
     if (fs.existsSync(file.path)) {
@@ -342,17 +359,25 @@ router.post('/export-data', authenticate, asyncHandler(async (req: AuthRequest, 
     Folder.find({ owner: req.user!._id })
   ]);
 
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
+
   const exportData = {
     user: {
       profile: {
-        email: user!.email,
-        username: user!.username,
-        firstName: user!.firstName,
-        lastName: user!.lastName,
-        createdAt: user!.createdAt
+        email: user.email,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        createdAt: user.createdAt
       },
-      subscription: user!.subscription,
-      settings: user!.settings
+      subscription: user.subscription,
+      settings: user.settings
     },
     files: files.map(file => ({
       name: file.name,

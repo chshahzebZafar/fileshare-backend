@@ -8,19 +8,41 @@ interface EmailOptions {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter | null = null;
 
   constructor() {
-    this.transporter = nodemailer.createTransporter({
-      service: process.env.EMAIL_SERVICE || 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+    this.initializeTransporter();
+  }
+
+  private initializeTransporter(): void {
+    const emailService = process.env.EMAIL_SERVICE || 'gmail';
+    const emailUser = "shahzaibzafar093@gmail.com";
+    const emailPass = "zxjvtqrfhctqhwrd";
+
+    if (!emailUser || !emailPass) {
+      console.warn('⚠️ Email configuration missing. Set EMAIL_USER and EMAIL_PASS in .env file');
+      return;
+    }
+
+    try {
+      this.transporter = nodemailer.createTransport({
+        service: emailService,
+        auth: {
+          user: emailUser,
+          pass: emailPass
+        }
+      });
+      console.log('✅ Email transporter initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize email transporter:', error);
+    }
   }
 
   async sendEmail(options: EmailOptions): Promise<void> {
+    if (!this.transporter) {
+      throw new Error('Email service not configured. Please check your .env file.');
+    }
+
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: options.to,
@@ -31,9 +53,9 @@ class EmailService {
 
     try {
       await this.transporter.sendMail(mailOptions);
-      console.log('Email sent successfully');
+      console.log(`✅ Email sent successfully to ${options.to}`);
     } catch (error) {
-      console.error('Email sending failed:', error);
+      console.error('❌ Email sending failed:', error);
       throw new Error('Failed to send email');
     }
   }
@@ -130,7 +152,7 @@ class EmailService {
     });
   }
 
-  async sendShareNotificationEmail(email: string, shareData: any): Promise<void> {
+  async sendShareNotificationEmail(email: string, shareData: { shareId: string; ownerName: string; fileName: string; fileSize: string }): Promise<void> {
     const shareUrl = `${process.env.FRONTEND_URL}/share/${shareData.shareId}`;
     
     const html = `

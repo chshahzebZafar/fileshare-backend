@@ -35,7 +35,7 @@ const validateFolder = [
 router.get('/', authenticate, asyncHandler(async (req: AuthRequest, res) => {
   const { parent } = req.query;
 
-  const query: any = { owner: req.user!._id };
+  const query: Record<string, unknown> = { owner: req.user!._id };
   if (parent) {
     query.parent = parent;
   } else {
@@ -227,7 +227,7 @@ router.delete('/:folderId', authenticate, asyncHandler(async (req: AuthRequest, 
     });
   }
 
-  await folder.remove();
+  await folder.deleteOne();
 
   res.json({
     success: true,
@@ -249,7 +249,7 @@ router.get('/:folderId/path', authenticate, asyncHandler(async (req: AuthRequest
     });
   }
 
-  const path: any[] = [];
+  const path: Array<{ _id: string; name: string; path: string }> = [];
   let currentFolder = folder;
 
   // Build path from current folder to root
@@ -261,7 +261,12 @@ router.get('/:folderId/path', authenticate, asyncHandler(async (req: AuthRequest
     });
 
     if (currentFolder.parent) {
-      currentFolder = await Folder.findById(currentFolder.parent);
+      const parentFolder = await Folder.findById(currentFolder.parent);
+      if (parentFolder) {
+        currentFolder = parentFolder;
+      } else {
+        break;
+      }
     } else {
       break;
     }
@@ -315,8 +320,9 @@ router.post('/:folderId/move', authenticate, asyncHandler(async (req: AuthReques
           message: 'Cannot move folder into its descendant'
         });
       }
-      current = await Folder.findById(current.parent);
-      if (!current) break;
+      const parentFolder = await Folder.findById(current.parent);
+      if (!parentFolder) break;
+      current = parentFolder;
     }
   }
 

@@ -9,11 +9,11 @@ import mongoose from 'mongoose';
 
 // Import routes
 import authRoutes from './routes/auth';
-import uploadRoutes from './routes/upload';
 import downloadRoutes from './routes/download';
 import fileRoutes from './routes/files';
 import folderRoutes from './routes/folders';
 import shareRoutes from './routes/share';
+import uploadRoutes from './routes/upload';
 import userRoutes from './routes/user';
 
 // Import middleware
@@ -27,8 +27,33 @@ const PORT = process.env.PORT || 5000;
 
 // Security middleware
 app.use(helmet());
+
+// CORS configuration to allow multiple origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://192.168.8.8:8080',
+  'http://192.168.8.8:3000',
+  'http://192.168.8.8:5173'
+];
+
+// Add FRONTEND_URL from environment if it exists
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      console.log('🚫 CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 
@@ -63,11 +88,11 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/upload', uploadRoutes);
 app.use('/api/download', downloadRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/folders', folderRoutes);
 app.use('/api/share', shareRoutes);
+app.use('/api/upload', uploadRoutes);
 app.use('/api/user', userRoutes);
 
 // 404 handler

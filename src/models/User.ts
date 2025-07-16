@@ -167,11 +167,15 @@ userSchema.methods.comparePassword = async function(candidatePassword: string): 
 
 // Method to generate JWT token
 userSchema.methods.generateAuthToken = function(): string {
-  return jwt.sign(
-    { userId: this._id, email: this.email },
-    process.env.JWT_SECRET!,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-  );
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured');
+  }
+  
+  const payload = { userId: this._id, email: this.email };
+  const options = { expiresIn: process.env.JWT_EXPIRES_IN || '7d' };
+  
+  return jwt.sign(payload, secret, options);
 };
 
 // Method to generate email verification token

@@ -1,10 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
 import { IFolder } from '../types';
+import { IFile } from '../types';
 
-export interface IFolderDocument extends IFolder, Document {
+export interface IFolderDocument extends Omit<IFolder, '_id'>, Document {
   getFullPath(): string;
   getChildren(): Promise<IFolderDocument[]>;
-  getFiles(): Promise<any[]>;
+  getFiles(): Promise<IFile[]>;
   getTotalSize(): Promise<number>;
   isExpired(): boolean;
 }
@@ -66,12 +67,12 @@ folderSchema.index({ createdAt: -1 });
 folderSchema.index({ name: 'text', description: 'text' });
 
 // Virtual for folder depth
-folderSchema.virtual('depth').get(function() {
+folderSchema.virtual('depth').get(function(this: IFolderDocument) {
   return this.path.split('/').length - 1;
 });
 
 // Virtual for is root folder
-folderSchema.virtual('isRoot').get(function() {
+folderSchema.virtual('isRoot').get(function(this: IFolderDocument) {
   return !this.parent;
 });
 
@@ -86,7 +87,7 @@ folderSchema.methods.getChildren = async function(): Promise<IFolderDocument[]> 
 };
 
 // Method to get files in folder
-folderSchema.methods.getFiles = async function(): Promise<any[]> {
+folderSchema.methods.getFiles = async function(): Promise<IFile[]> {
   return this.model('File').find({ folder: this._id }).sort({ name: 1 });
 };
 
@@ -116,7 +117,7 @@ folderSchema.pre('save', async function(next) {
         if (!parentFolder) {
           throw new Error('Parent folder not found');
         }
-        this.path = `${parentFolder.path}/${this.name}`;
+        this.path = `${(parentFolder as any).path}/${this.name}`;
       } else {
         // For root folders, create a simple path with user ID and folder name
         this.path = `/${this.owner.toString()}/${this.name}`;
@@ -133,8 +134,8 @@ folderSchema.pre('save', async function(next) {
   next();
 });
 
-// Pre-remove middleware to handle children
-folderSchema.pre('remove', async function(next) {
+// Pre-delete middleware to handle children
+folderSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
   try {
     // Move all files to parent folder or root
     const File = this.model('File');

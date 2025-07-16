@@ -6,6 +6,18 @@ export interface AppError extends Error {
   isOperational?: boolean;
 }
 
+interface MongoError extends Error {
+  code?: number;
+}
+
+interface ValidationError extends Error {
+  errors?: Record<string, { message: string }>;
+}
+
+interface MulterError extends Error {
+  code?: string;
+}
+
 export const errorHandler = (
   err: AppError,
   req: Request,
@@ -32,14 +44,17 @@ export const errorHandler = (
   }
 
   // Mongoose duplicate key
-  if (err.name === 'MongoError' && (err as any).code === 11000) {
+  if (err.name === 'MongoError' && (err as MongoError).code === 11000) {
     const message = 'Duplicate field value entered';
     error = { ...error, message, statusCode: 400 };
   }
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
-    const message = Object.values((err as any).errors).map((val: any) => val.message).join(', ');
+    const validationError = err as ValidationError;
+    const message = validationError.errors 
+      ? Object.values(validationError.errors).map((val) => val.message).join(', ')
+      : 'Validation error';
     error = { ...error, message, statusCode: 400 };
   }
 
@@ -57,7 +72,8 @@ export const errorHandler = (
   // Multer errors
   if (err.name === 'MulterError') {
     let message = 'File upload error';
-    switch ((err as any).code) {
+    const multerError = err as MulterError;
+    switch (multerError.code) {
       case 'LIMIT_FILE_SIZE':
         message = 'File too large';
         break;
@@ -89,7 +105,9 @@ export const notFound = (req: Request, res: Response, next: NextFunction) => {
   next(error);
 };
 
-export const asyncHandler = (fn: Function) => {
+type AsyncFunction = (req: Request, res: Response, next: NextFunction) => Promise<void | Response>;
+
+export const asyncHandler = (fn: AsyncFunction) => {
   return (req: Request, res: Response, next: NextFunction) => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };

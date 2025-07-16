@@ -8,6 +8,7 @@ import { authenticate, checkStorageLimit } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { uploadSingle, uploadMultiple, generateFileHash, cleanupUploadedFiles } from '../middleware/upload';
 import { AuthRequest } from '../types';
+import { Collection } from '../models/File';
 
 const router = express.Router();
 
@@ -56,7 +57,7 @@ router.post('/single',
       });
     }
 
-    uploadSingle(req, res, async (err: any) => {
+    uploadSingle(req, res, async (err: Error | null) => {
       if (err) {
         return res.status(400).json({
           success: false,
@@ -90,15 +91,33 @@ router.post('/single',
         const hash = await generateFileHash(req.file.path);
 
         // Check for duplicate file
-        const existingFile = await File.findOne({ hash, owner: req.user!._id });
-        if (existingFile) {
-          cleanupUploadedFiles(req.file);
-          return res.status(409).json({
-            success: false,
-            message: 'File already exists',
-            data: { existingFile }
-          });
-        }
+       // Check for duplicate file
+const existingFile = await File.findOne({ hash, owner: req.user!._id });
+if (existingFile) {
+  cleanupUploadedFiles(req.file);
+
+  // Optionally update metadata (like folder, tags) if user provides them again
+  if (folder) existingFile.folder = folder;
+  if (tags) existingFile.tags = JSON.parse(tags);
+  if (typeof isPublic !== 'undefined') existingFile.permissions.public = isPublic === 'true' || isPublic === true;
+  if (password) existingFile.permissions.password = password;
+  if (expiresAt) existingFile.permissions.expiresAt = new Date(expiresAt);
+  if (maxDownloads) existingFile.permissions.maxDownloads = parseInt(maxDownloads);
+
+  await existingFile.save();
+
+  await existingFile.populate('owner', 'username email');
+  if (existingFile.folder) {
+    await existingFile.populate('folder', 'name path');
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'File already exists, reused previous file',
+    data: { file: existingFile }
+  });
+}
+
 
         // Create file document
         const file = new File({
@@ -159,8 +178,15 @@ router.post('/multiple',
       });
     }
 
-    uploadMultiple(req, res, async (err: any) => {
+    uploadMultiple(req, res, async (err: Error | null) => {
+      console.log('📤 Backend: Upload request received');
+      console.log('📤 Backend: req.files:', req.files ? req.files.length : 'undefined');
+      console.log('📤 Backend: req.body:', req.body);
+      console.log('📤 Backend: req.headers:', req.headers);
+      console.log('📤 Backend: User:', req.user?._id);
+      
       if (err) {
+        console.log('❌ Backend: Upload error:', err.message);
         return res.status(400).json({
           success: false,
           message: err.message
@@ -168,14 +194,17 @@ router.post('/multiple',
       }
 
       if (!req.files || req.files.length === 0) {
+        console.log('❌ Backend: No files in request');
         return res.status(400).json({
           success: false,
           message: 'No files uploaded'
         });
       }
+      
+      console.log('✅ Backend: Files received successfully');
 
       try {
-        const { folder, tags, public: isPublic, password, expiresAt, maxDownloads } = req.body;
+        const { folder, tags, public: isPublic, password, expiresAt, maxDownloads, bundleName } = req.body;
         const files = req.files as Express.Multer.File[];
 
         // Validate folder if provided
@@ -192,22 +221,40 @@ router.post('/multiple',
 
         const uploadedFiles = [];
         const errors = [];
-
+        const fileIds = [];
         for (const file of files) {
           try {
             // Generate file hash
             const hash = await generateFileHash(file.path);
 
             // Check for duplicate file
-            const existingFile = await File.findOne({ hash, owner: req.user!._id });
-            if (existingFile) {
-              cleanupUploadedFiles([file]);
-              errors.push({
-                filename: file.originalname,
-                error: 'File already exists'
-              });
-              continue;
-            }
+          // Check for duplicate file
+const existingFile = await File.findOne({ hash, owner: req.user!._id });
+if (existingFile) {
+  cleanupUploadedFiles(req.file);
+
+  // Optionally update metadata (like folder, tags) if user provides them again
+  if (folder) existingFile.folder = folder;
+  if (tags) existingFile.tags = JSON.parse(tags);
+  if (typeof isPublic !== 'undefined') existingFile.permissions.public = isPublic === 'true' || isPublic === true;
+  if (password) existingFile.permissions.password = password;
+  if (expiresAt) existingFile.permissions.expiresAt = new Date(expiresAt);
+  if (maxDownloads) existingFile.permissions.maxDownloads = parseInt(maxDownloads);
+
+  await existingFile.save();
+
+  await existingFile.populate('owner', 'username email');
+  if (existingFile.folder) {
+    await existingFile.populate('folder', 'name path');
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'File already exists, reused previous file',
+    data: { file: existingFile }
+  });
+}
+
 
             // Create file document
             const fileDoc = new File({
@@ -236,6 +283,7 @@ router.post('/multiple',
             }
 
             uploadedFiles.push(fileDoc);
+            fileIds.push(fileDoc._id);
 
           } catch (error) {
             cleanupUploadedFiles([file]);
@@ -245,13 +293,23 @@ router.post('/multiple',
             });
           }
         }
-
+        // If bundleName is provided, create a Collection
+        let collection = null;
+        if (bundleName && fileIds.length > 0) {
+          collection = new Collection({
+            name: bundleName,
+            owner: req.user!._id,
+            files: fileIds
+          });
+          await collection.save();
+        }
         res.status(201).json({
           success: true,
           message: `Uploaded ${uploadedFiles.length} files successfully`,
           data: {
             files: uploadedFiles,
-            errors: errors.length > 0 ? errors : undefined
+            errors: errors.length > 0 ? errors : undefined,
+            collectionId: collection ? collection._id : undefined
           }
         });
 
@@ -259,6 +317,100 @@ router.post('/multiple',
         cleanupUploadedFiles(files);
         throw error;
       }
+    });
+  })
+);
+
+// @route   POST /api/upload/folder
+// @desc    Upload a complete folder (multiple files with relative paths)
+// @access  Private
+router.post('/folder',
+  authenticate,
+  checkStorageLimit,
+  asyncHandler(async (req: AuthRequest, res) => {
+    // Use uploadMultiple middleware to handle multiple files
+    uploadMultiple(req, res, async (err: Error | null) => {
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          message: err.message
+        });
+      }
+      if (!req.files || req.files.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'No files uploaded'
+        });
+      }
+      const files = req.files as Express.Multer.File[];
+      const uploadedFiles = [];
+      const createdFolders = new Set<string>();
+      const folderCache: Record<string, any> = {};
+      for (const file of files) {
+        // The frontend should send the relative path for each file as part of the form data
+        // e.g., req.body['relativePath_0'] = 'myfolder/subfolder/file.txt'
+        //       req.body['relativePath_1'] = 'myfolder/file2.txt'
+        // The index matches the file order in req.files
+        const idx = files.indexOf(file);
+        const relativePath = req.body[`relativePath_${idx}`];
+        if (!relativePath) {
+          cleanupUploadedFiles(file);
+          continue;
+        }
+        // Parse folder structure from relativePath
+        const pathParts = relativePath.split('/');
+        const fileName = pathParts.pop();
+        let parentFolderId = null;
+        let currentPath = '';
+        for (const part of pathParts) {
+          currentPath = currentPath ? `${currentPath}/${part}` : part;
+          if (!folderCache[currentPath]) {
+            // Check if folder exists for this user and path
+            let folderDoc = await Folder.findOne({ name: part, owner: req.user!._id, parent: parentFolderId });
+            if (!folderDoc) {
+              // Create folder if it doesn't exist
+              folderDoc = new Folder({
+                name: part,
+                owner: req.user!._id,
+                parent: parentFolderId
+              });
+              await folderDoc.save();
+              createdFolders.add(currentPath);
+            }
+            folderCache[currentPath] = folderDoc._id;
+          }
+          parentFolderId = folderCache[currentPath];
+        }
+        // Generate file hash
+        const hash = await generateFileHash(file.path);
+        // Check for duplicate file in this folder for this user
+        const existingFile = await File.findOne({ hash, owner: req.user!._id, folder: parentFolderId });
+        if (existingFile) {
+          cleanupUploadedFiles(file);
+          continue;
+        }
+        // Create file document
+        const fileDoc = new File({
+          name: file.filename,
+          originalName: file.originalname,
+          mimeType: file.mimetype,
+          size: file.size,
+          path: file.path,
+          hash,
+          owner: req.user!._id,
+          folder: parentFolderId
+        });
+        await fileDoc.save();
+        uploadedFiles.push(fileDoc);
+      }
+      res.status(201).json({
+        success: true,
+        message: `Uploaded ${uploadedFiles.length} files and created ${createdFolders.size} folders successfully`,
+        data: {
+          files: uploadedFiles,
+          folders: Array.from(createdFolders)
+        }
+      });
     });
   })
 );
@@ -279,7 +431,7 @@ router.post('/chunk',
     }
 
     // Create temporary directory for chunks
-    const tempDir = path.join(process.env.UPLOAD_PATH || './uploads', 'temp', fileId);
+    const tempDir = path.join(process.env.UPLOAD_DIR || './uploads', 'temp', fileId);
     if (!fs.existsSync(tempDir)) {
       fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -304,7 +456,7 @@ router.post('/chunk',
     
     if (uploadedChunks.length === parseInt(totalChunks)) {
       // Combine chunks
-      const finalPath = path.join(process.env.UPLOAD_PATH || './uploads', req.user!._id.toString(), fileName);
+      const finalPath = path.join(process.env.UPLOAD_DIR || './uploads', req.user!._id.toString(), fileName);
       const finalDir = path.dirname(finalPath);
       
       if (!fs.existsSync(finalDir)) {
@@ -318,13 +470,9 @@ router.post('/chunk',
         const chunkBuffer = fs.readFileSync(chunkPath);
         writeStream.write(chunkBuffer);
       }
-      
       writeStream.end();
-
-      // Clean up temp directory
       fs.rmSync(tempDir, { recursive: true, force: true });
 
-      // Create file document
       const hash = await generateFileHash(finalPath);
       
       const file = new File({
@@ -357,15 +505,11 @@ router.post('/chunk',
     }
   })
 );
-
 // @route   GET /api/upload/progress/:fileId
 // @desc    Get upload progress for a file
 // @access  Private
 router.get('/progress/:fileId', authenticate, asyncHandler(async (req: AuthRequest, res) => {
   const { fileId } = req.params;
-  
-  // This would typically be stored in Redis or memory for real-time progress
-  // For now, we'll return a mock response
   res.json({
     success: true,
     data: {
