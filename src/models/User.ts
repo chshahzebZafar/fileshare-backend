@@ -101,7 +101,7 @@ const userSchema = new Schema<IUserDocument>({
     },
     limit: {
       type: Number,
-      default: 1024 * 1024 * 1024 // 1GB for free plan
+      default: 2*1024 * 1024 * 1024
     }
   },
   settings: {

@@ -292,6 +292,105 @@ router.get('/activity', authenticate, asyncHandler(async (req: AuthRequest, res)
   });
 }));
 
+// @route   GET /api/user/global-activity
+// @desc    Get global user activity for world map
+// @access  Public
+router.get('/global-activity', asyncHandler(async (req, res) => {
+  try {
+    // Get users who were active in the last 24 hours
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    
+    const userActivity = await User.aggregate([
+      {
+        $match: {
+          lastActive: { $gte: twentyFourHoursAgo }
+        }
+      },
+      {
+        $group: {
+          _id: '$country',
+          userCount: { $sum: 1 },
+          lastActive: { $max: '$lastActive' }
+        }
+      },
+      {
+        $project: {
+          country: '$_id',
+          userCount: 1,
+          lastActive: 1,
+          _id: 0
+        }
+      },
+      {
+        $sort: { userCount: -1 }
+      }
+    ]);
+
+    // Add country coordinates and codes
+    const countryData = {
+      'United States': { code: 'US', lat: 39.8283, lng: -98.5795 },
+      'United Kingdom': { code: 'GB', lat: 55.3781, lng: -3.4360 },
+      'Germany': { code: 'DE', lat: 51.1657, lng: 10.4515 },
+      'France': { code: 'FR', lat: 46.2276, lng: 2.2137 },
+      'Canada': { code: 'CA', lat: 56.1304, lng: -106.3468 },
+      'Australia': { code: 'AU', lat: -25.2744, lng: 133.7751 },
+      'Japan': { code: 'JP', lat: 36.2048, lng: 138.2529 },
+      'Brazil': { code: 'BR', lat: -14.2350, lng: -51.9253 },
+      'India': { code: 'IN', lat: 20.5937, lng: 78.9629 },
+      'Spain': { code: 'ES', lat: 40.4637, lng: -3.7492 },
+      'Netherlands': { code: 'NL', lat: 52.1326, lng: 5.2913 },
+      'Italy': { code: 'IT', lat: 41.8719, lng: 12.5674 },
+      'Sweden': { code: 'SE', lat: 60.1282, lng: 18.6435 },
+      'Norway': { code: 'NO', lat: 60.4720, lng: 8.4689 },
+      'Denmark': { code: 'DK', lat: 56.2639, lng: 9.5018 },
+      'Finland': { code: 'FI', lat: 61.9241, lng: 25.7482 },
+      'Switzerland': { code: 'CH', lat: 46.8182, lng: 8.2275 },
+      'Belgium': { code: 'BE', lat: 50.8503, lng: 4.3517 },
+      'Austria': { code: 'AT', lat: 47.5162, lng: 14.5501 },
+      'Poland': { code: 'PL', lat: 51.9194, lng: 19.1451 },
+      'Czech Republic': { code: 'CZ', lat: 49.8175, lng: 15.4730 },
+      'Hungary': { code: 'HU', lat: 47.1625, lng: 19.5033 },
+      'Slovakia': { code: 'SK', lat: 48.6690, lng: 19.6990 },
+      'Slovenia': { code: 'SI', lat: 46.0569, lng: 14.5058 },
+      'Croatia': { code: 'HR', lat: 45.1000, lng: 15.2000 },
+      'Serbia': { code: 'RS', lat: 44.0165, lng: 21.0059 },
+      'Bulgaria': { code: 'BG', lat: 42.7339, lng: 25.4858 },
+      'Romania': { code: 'RO', lat: 45.9432, lng: 24.9668 },
+      'Greece': { code: 'GR', lat: 39.0742, lng: 21.8243 },
+      'Portugal': { code: 'PT', lat: 39.3999, lng: -8.2245 },
+      'Ireland': { code: 'IE', lat: 53.1424, lng: -7.6921 },
+      'Iceland': { code: 'IS', lat: 64.9631, lng: -19.0208 },
+      'Luxembourg': { code: 'LU', lat: 49.8153, lng: 6.1296 },
+      'Malta': { code: 'MT', lat: 35.9375, lng: 14.3754 }
+    };
+
+    const enrichedActivity = userActivity
+      .filter(activity => countryData[activity.country])
+      .map(activity => ({
+        ...activity,
+        countryCode: countryData[activity.country].code,
+        latitude: countryData[activity.country].lat,
+        longitude: countryData[activity.country].lng
+      }));
+
+    res.json({
+      success: true,
+      data: {
+        userActivity: enrichedActivity,
+        totalUsers: enrichedActivity.reduce((sum, activity) => sum + activity.userCount, 0),
+        totalCountries: enrichedActivity.length,
+        lastUpdated: new Date()
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching global activity:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch global activity data'
+    });
+  }
+}));
+
 // @route   DELETE /api/user/account
 // @desc    Delete user account
 // @access  Private
