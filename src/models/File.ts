@@ -55,7 +55,8 @@ const fileSchema = new Schema<IFileDocument>({
     height: Number,
     duration: Number,
     bitrate: Number,
-    codec: String
+    codec: String,
+    iv: String
   },
   permissions: {
     public: {

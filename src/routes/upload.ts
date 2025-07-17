@@ -6,7 +6,7 @@ import File from '../models/File';
 import Folder from '../models/Folder';
 import { authenticate, checkStorageLimit } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { uploadSingle, uploadMultiple, generateFileHash, cleanupUploadedFiles } from '../middleware/upload';
+import { uploadSingle, uploadMultiple, generateFileHash, cleanupUploadedFiles, encryptFileOnDisk } from '../middleware/upload';
 import { AuthRequest } from '../types';
 import { Collection } from '../models/File';
 
@@ -119,6 +119,10 @@ if (existingFile) {
 }
 
 
+        // Encrypt the file on disk
+        const { iv } = await encryptFileOnDisk(req.file.path);
+        console.log('Saved file with IV:', iv, 'for file:', req.file.filename);
+
         // Create file document
         const file = new File({
           name: req.file.filename,
@@ -136,6 +140,10 @@ if (existingFile) {
             expiresAt: expiresAt ? new Date(expiresAt) : undefined,
             maxDownloads: maxDownloads ? parseInt(maxDownloads) : undefined,
             downloadCount: 0
+          },
+          metadata: {
+            ...req.file.metadata,
+            iv
           }
         });
 
@@ -256,6 +264,10 @@ if (existingFile) {
 }
 
 
+            // Encrypt the file on disk
+            const { iv } = await encryptFileOnDisk(file.path);
+            console.log('Saved file with IV:', iv, 'for file:', file.filename);
+
             // Create file document
             const fileDoc = new File({
               name: file.filename,
@@ -273,6 +285,10 @@ if (existingFile) {
                 expiresAt: expiresAt ? new Date(expiresAt) : undefined,
                 maxDownloads: maxDownloads ? parseInt(maxDownloads) : undefined,
                 downloadCount: 0
+              },
+              metadata: {
+                ...file.metadata,
+                iv
               }
             });
 

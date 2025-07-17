@@ -163,6 +163,38 @@ export const uploadWithValidation = (fieldName: string = 'file', maxCount: numbe
   };
 };
 
+// AES-256 encryption utilities
+const ENCRYPTION_KEY = process.env.FILE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'); // 32 bytes for AES-256
+const ALGORITHM = 'aes-256-cbc';
+
+export function createEncryptionStream() {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  return { cipher, iv };
+}
+
+export function createDecryptionStream(iv: Buffer) {
+  const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  return decipher;
+}
+
+// Exported async function for file encryption
+export async function encryptFileOnDisk(filePath: string): Promise<{ iv: string }> {
+  const tempPath = filePath + '.enc';
+  const { cipher, iv } = createEncryptionStream();
+  return new Promise((resolve, reject) => {
+    const input = fs.createReadStream(filePath);
+    const output = fs.createWriteStream(tempPath);
+    input.pipe(cipher).pipe(output);
+    output.on('finish', () => {
+      fs.unlinkSync(filePath);
+      fs.renameSync(tempPath, filePath);
+      resolve({ iv: iv.toString('hex') });
+    });
+    output.on('error', reject);
+  });
+}
+
 // Generate file hash
 export const generateFileHash = (filePath: string): Promise<string> => {
   return new Promise((resolve, reject) => {

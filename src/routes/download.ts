@@ -9,6 +9,7 @@ import { AuthRequest } from '../types';
 import jwt from 'jsonwebtoken';
 import { Collection } from '../models/File';
 import archiver from 'archiver';
+import { createDecryptionStream } from '../middleware/upload';
 
 const router = express.Router();
 
@@ -202,14 +203,40 @@ router.get('/share/:shareId', asyncHandler(async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     share.access.downloadCount += 1;
     await share.save();
-    const fileStream = fs.createReadStream(file.path);
-    fileStream.pipe(res);
-    fileStream.on('error', (error) => {
-      console.error('File stream error:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ success: false, message: 'Error streaming file' });
-      }
-    });
+    // Decrypt and stream the file
+    const ivHex = file.metadata?.iv;
+    if (!ivHex || typeof ivHex !== 'string' || ivHex.length !== 32) {
+      console.error('Invalid IV:', ivHex);
+      return res.status(500).json({ success: false, message: 'File has invalid or missing encryption IV.' });
+    }
+    let iv;
+    try {
+      iv = Buffer.from(ivHex, 'hex');
+    } catch (err) {
+      console.error('Error creating IV buffer:', err);
+      return res.status(500).json({ success: false, message: 'Failed to process encryption IV.' });
+    }
+    let decipher;
+    try {
+      decipher = createDecryptionStream(iv);
+    } catch (err) {
+      console.error('Error creating decipher:', err);
+      return res.status(500).json({ success: false, message: 'Failed to create decryption stream.' });
+    }
+    let fileStream;
+    try {
+      fileStream = fs.createReadStream(file.path).pipe(decipher);
+      fileStream.pipe(res);
+      fileStream.on('error', (error) => {
+        console.error('File stream error:', error);
+        if (!res.headersSent) {
+          res.status(500).json({ success: false, message: 'Error streaming file' });
+        }
+      });
+    } catch (err) {
+      console.error('Error streaming or decrypting file:', err);
+      return res.status(500).json({ success: false, message: 'Error streaming or decrypting file.' });
+    }
   } else if (share.type === 'collection') {
     // Download all files in the collection as a ZIP
     const collection = resource as any;
@@ -228,12 +255,44 @@ router.get('/share/:shareId', asyncHandler(async (req, res) => {
       res.status(500).json({ success: false, message: 'Error creating ZIP', error: err.message });
     });
     archive.pipe(res);
+    const fileAppendPromises = [];
     for (const file of collection.files) {
       if (file && file.path && file.originalName && fs.existsSync(file.path)) {
-        archive.file(file.path, { name: file.originalName });
+        const ivHex = file.metadata?.iv;
+        if (!ivHex || typeof ivHex !== 'string' || ivHex.length !== 32) {
+          console.warn('Skipping file due to missing or invalid IV:', file.originalName, ivHex);
+          continue;
+        }
+        let iv;
+        try {
+          iv = Buffer.from(ivHex, 'hex');
+          console.log('Decrypting file with IV:', ivHex, 'for file:', file.originalName);
+        } catch (err) {
+          console.error('Error creating IV buffer for file:', file.originalName, err);
+          continue;
+        }
+        let decipher;
+        try {
+          decipher = createDecryptionStream(iv);
+        } catch (err) {
+          console.error('Error creating decipher for file:', file.originalName, err);
+          continue;
+        }
+        const fileStream = fs.createReadStream(file.path).pipe(decipher);
+        fileAppendPromises.push(new Promise((resolve, reject) => {
+          fileStream.on('end', resolve);
+          fileStream.on('error', reject);
+          archive.append(fileStream, { name: file.originalName });
+        }));
+        console.log('Appended file to archive:', file.originalName);
       }
     }
-    archive.finalize();
+    Promise.all(fileAppendPromises)
+      .then(() => archive.finalize())
+      .catch(err => {
+        console.error('Error appending files to archive:', err);
+        res.status(500).json({ success: false, message: 'Error creating ZIP', error: err.message });
+      });
     return;
   } else {
     return res.status(501).json({ success: false, message: 'Folder download not implemented yet' });
