@@ -212,8 +212,16 @@ router.post('/multiple',
       console.log('✅ Backend: Files received successfully');
 
       try {
-        const { folder, tags, public: isPublic, password, expiresAt, maxDownloads, bundleName } = req.body;
+        const { folder, tags, public: isPublic, password, expiresAt, maxDownloads, bundleName, title, message, recipients } = req.body;
         const files = req.files as Express.Multer.File[];
+        let parsedRecipients = [];
+        if (recipients) {
+          try {
+            parsedRecipients = typeof recipients === 'string' ? JSON.parse(recipients) : recipients;
+          } catch (e) {
+            parsedRecipients = [];
+          }
+        }
 
         // Validate folder if provided
         if (folder) {
@@ -279,6 +287,9 @@ if (existingFile) {
               owner: req.user!._id,
               folder: folder || null,
               tags: tags ? JSON.parse(tags) : [],
+              title: title || '',
+              message: message || '',
+              recipients: parsedRecipients,
               permissions: {
                 public: isPublic === 'true' || isPublic === true,
                 password: password || undefined,
@@ -315,7 +326,10 @@ if (existingFile) {
           collection = new Collection({
             name: bundleName,
             owner: req.user!._id,
-            files: fileIds
+            files: fileIds,
+            title: title || '',
+            message: message || '',
+            recipients: parsedRecipients
           });
           await collection.save();
         }

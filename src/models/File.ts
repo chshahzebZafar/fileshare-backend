@@ -10,6 +10,22 @@ export interface IFileDocument extends IFile, Document {
 }
 
 const fileSchema = new Schema<IFileDocument>({
+  title: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  message: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  recipients: [
+    {
+      email: { type: String, trim: true, required: true },
+      type: { type: String, enum: ['to', 'cc'], default: 'to' }
+    }
+  ],
   name: {
     type: String,
     required: [true, 'File name is required'],
@@ -218,12 +234,23 @@ export interface ICollectionDocument extends Document {
   files: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
+  title: string;
+  message: string;
+  recipients: { email: string, type: 'to' | 'cc' }[];
 }
 
 const collectionSchema = new Schema<ICollectionDocument>({
   name: { type: String, required: true, trim: true },
   owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   files: [{ type: Schema.Types.ObjectId, ref: 'File', required: true }],
+  title: { type: String, trim: true, default: '' },
+  message: { type: String, trim: true, default: '' },
+  recipients: [
+    {
+      email: { type: String, trim: true, required: true },
+      type: { type: String, enum: ['to', 'cc'], default: 'to' }
+    }
+  ],
 }, {
   timestamps: true
 });
