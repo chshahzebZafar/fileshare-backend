@@ -2,7 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 import User from './User';
 import { IFile } from '../types';
 
-export interface IFileDocument extends IFile, Document {
+export interface IFileDocument extends Omit<IFile, '_id'>, Document {
   updateDownloadCount(): Promise<void>;
   isExpired(): boolean;
   canDownload(): boolean;
@@ -45,9 +45,9 @@ const fileSchema = new Schema<IFileDocument>({
     required: [true, 'File size is required'],
     min: [0, 'File size cannot be negative']
   },
-  path: {
+  s3Key: {
     type: String,
-    required: [true, 'File path is required']
+    required: [true, 'S3 key is required']
   },
   hash: {
     type: String,
@@ -125,12 +125,12 @@ fileSchema.index({ name: 'text', originalName: 'text' });
 fileSchema.index({ hash: 1, owner: 1 }, { unique: true }); // Added compound unique index
 
 // Virtual for file extension
-fileSchema.virtual('extension').get(function() {
+fileSchema.virtual('extension').get(function(this: IFileDocument) {
   return this.originalName.split('.').pop()?.toLowerCase();
 });
 
 // Virtual for formatted size
-fileSchema.virtual('formattedSize').get(function() {
+fileSchema.virtual('formattedSize').get(function(this: IFileDocument) {
   const bytes = this.size;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   if (bytes === 0) return '0 Bytes';
@@ -139,22 +139,22 @@ fileSchema.virtual('formattedSize').get(function() {
 });
 
 // Virtual for is image
-fileSchema.virtual('isImage').get(function() {
+fileSchema.virtual('isImage').get(function(this: IFileDocument) {
   return this.mimeType.startsWith('image/');
 });
 
 // Virtual for is video
-fileSchema.virtual('isVideo').get(function() {
+fileSchema.virtual('isVideo').get(function(this: IFileDocument) {
   return this.mimeType.startsWith('video/');
 });
 
 // Virtual for is audio
-fileSchema.virtual('isAudio').get(function() {
+fileSchema.virtual('isAudio').get(function(this: IFileDocument) {
   return this.mimeType.startsWith('audio/');
 });
 
 // Virtual for is document
-fileSchema.virtual('isDocument').get(function() {
+fileSchema.virtual('isDocument').get(function(this: IFileDocument) {
   const documentTypes = [
     'application/pdf',
     'application/msword',
@@ -200,7 +200,7 @@ fileSchema.methods.getPublicUrl = function(): string {
 };
 
 // Pre-save middleware to update user storage
-fileSchema.pre('save', async function(next) {
+fileSchema.pre('save', async function(this: IFileDocument, next) {
   if (this.isNew) {
     try {
       await User.findByIdAndUpdate(
@@ -215,7 +215,7 @@ fileSchema.pre('save', async function(next) {
 });
 
 // Pre-deleteOne middleware to update user storage
-fileSchema.pre('deleteOne', { document: true, query: false }, async function(next) {
+fileSchema.pre('deleteOne', { document: true, query: false }, async function(this: IFileDocument, next) {
   try {
     await User.findByIdAndUpdate(
       this.owner,

@@ -43,7 +43,7 @@ export interface IFile {
   originalName: string;
   mimeType: string;
   size: number;
-  path: string;
+  s3Key: string;
   hash: string;
   owner: string | IUser;
   folder?: string | IFolder;
@@ -92,7 +92,6 @@ export interface IFolder {
 
 // Share related types
 export interface IShare {
-  _id?: string;
   type: 'file' | 'folder' | 'collection';
   resource: string | IFile | IFolder;
   resourceModel?: 'File' | 'Folder' | 'Collection';

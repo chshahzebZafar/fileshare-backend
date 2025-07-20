@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { IUser } from '../types';
 
-export interface IUserDocument extends IUser, Document {
+export interface IUserDocument extends Omit<IUser, '_id'>, Document {
   comparePassword(candidatePassword: string): Promise<boolean>;
   generateAuthToken(): string;
   generateEmailVerificationToken(): string;
@@ -175,7 +175,7 @@ userSchema.methods.generateAuthToken = function(): string {
   const payload = { userId: this._id, email: this.email };
   const options = { expiresIn: process.env.JWT_EXPIRES_IN || '7d' };
   
-  return jwt.sign(payload, secret, options);
+  return jwt.sign(payload, secret, { expiresIn: options.expiresIn as string });
 };
 
 // Method to generate email verification token

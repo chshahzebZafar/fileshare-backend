@@ -6,7 +6,7 @@ import File from '../models/File';
 import Folder from '../models/Folder';
 import { authenticate, checkStorageLimit } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
-import { uploadSingle, uploadMultiple, generateFileHash, cleanupUploadedFiles, encryptFileOnDisk } from '../middleware/upload';
+import { uploadSingle, uploadMultiple, generateFileHash, cleanupUploadedFiles, uploadFileToS3 } from '../middleware/upload';
 import { AuthRequest } from '../types';
 import { Collection } from '../models/File';
 
@@ -57,7 +57,7 @@ router.post('/single',
       });
     }
 
-    uploadSingle(req, res, async (err: Error | null) => {
+    uploadSingle(req, res, async (err: any) => {
       if (err) {
         return res.status(400).json({
           success: false,
@@ -88,14 +88,11 @@ router.post('/single',
         }
 
         // Generate file hash
-        const hash = await generateFileHash(req.file.path);
+        const hash = generateFileHash(req.file.buffer!);
 
-        // Check for duplicate file
        // Check for duplicate file
 const existingFile = await File.findOne({ hash, owner: req.user!._id });
 if (existingFile) {
-  cleanupUploadedFiles(req.file);
-
   // Optionally update metadata (like folder, tags) if user provides them again
   if (folder) existingFile.folder = folder;
   if (tags) existingFile.tags = JSON.parse(tags);
@@ -118,18 +115,17 @@ if (existingFile) {
   });
 }
 
-
-        // Encrypt the file on disk
-        const { iv } = await encryptFileOnDisk(req.file.path);
-        console.log('Saved file with IV:', iv, 'for file:', req.file.filename);
+        // Upload file to S3
+        const { s3Key, metadata } = await uploadFileToS3(req.file, req.user!._id.toString(), folder);
+        console.log('Uploaded file to S3 with key:', s3Key);
 
         // Create file document
         const file = new File({
-          name: req.file.filename,
+          name: metadata.originalName,
           originalName: req.file.originalname,
           mimeType: req.file.mimetype,
           size: req.file.size,
-          path: req.file.path,
+          s3Key: s3Key,
           hash,
           owner: req.user!._id,
           folder: folder || null,
@@ -143,7 +139,7 @@ if (existingFile) {
           },
           metadata: {
             ...req.file.metadata,
-            iv
+            iv: metadata.iv
           }
         });
 
@@ -186,7 +182,7 @@ router.post('/multiple',
       });
     }
 
-    uploadMultiple(req, res, async (err: Error | null) => {
+    uploadMultiple(req, res, async (err: any) => {
       console.log('📤 Backend: Upload request received');
       console.log('📤 Backend: req.files:', req.files ? req.files.length : 'undefined');
       console.log('📤 Backend: req.body:', req.body);
@@ -241,7 +237,7 @@ router.post('/multiple',
         for (const file of files) {
           try {
             // Generate file hash
-            const hash = await generateFileHash(file.path);
+        const hash = generateFileHash(file.buffer!);
 
             // Check for duplicate file
           // Check for duplicate file
@@ -272,24 +268,21 @@ if (existingFile) {
 }
 
 
-            // Encrypt the file on disk
-            const { iv } = await encryptFileOnDisk(file.path);
-            console.log('Saved file with IV:', iv, 'for file:', file.filename);
+                    // Upload file to S3
+        const { s3Key, metadata } = await uploadFileToS3(file, req.user!._id.toString(), folder);
+            console.log('Uploaded file to S3 with key:', s3Key);
 
             // Create file document
             const fileDoc = new File({
-              name: file.filename,
+              name: metadata.originalName,
               originalName: file.originalname,
               mimeType: file.mimetype,
               size: file.size,
-              path: file.path,
+              s3Key: s3Key,
               hash,
               owner: req.user!._id,
               folder: folder || null,
               tags: tags ? JSON.parse(tags) : [],
-              title: title || '',
-              message: message || '',
-              recipients: parsedRecipients,
               permissions: {
                 public: isPublic === 'true' || isPublic === true,
                 password: password || undefined,
@@ -299,7 +292,7 @@ if (existingFile) {
               },
               metadata: {
                 ...file.metadata,
-                iv
+                iv: metadata.iv
               }
             });
 
@@ -359,7 +352,7 @@ router.post('/folder',
   checkStorageLimit,
   asyncHandler(async (req: AuthRequest, res) => {
     // Use uploadMultiple middleware to handle multiple files
-    uploadMultiple(req, res, async (err: Error | null) => {
+    uploadMultiple(req, res, async (err: any) => {
       if (err) {
         return res.status(400).json({
           success: false,
@@ -412,20 +405,23 @@ router.post('/folder',
           parentFolderId = folderCache[currentPath];
         }
         // Generate file hash
-        const hash = await generateFileHash(file.path);
+        const hash = generateFileHash(file.buffer!);
         // Check for duplicate file in this folder for this user
         const existingFile = await File.findOne({ hash, owner: req.user!._id, folder: parentFolderId });
         if (existingFile) {
           cleanupUploadedFiles(file);
           continue;
         }
+        // Upload file to S3
+        const { s3Key, metadata } = await uploadFileToS3(file, req.user!._id.toString(), parentFolderId?.toString());
+
         // Create file document
         const fileDoc = new File({
-          name: file.filename,
+          name: metadata.originalName,
           originalName: file.originalname,
           mimeType: file.mimetype,
           size: file.size,
-          path: file.path,
+          s3Key: s3Key,
           hash,
           owner: req.user!._id,
           folder: parentFolderId
@@ -503,14 +499,22 @@ router.post('/chunk',
       writeStream.end();
       fs.rmSync(tempDir, { recursive: true, force: true });
 
-      const hash = await generateFileHash(finalPath);
+      const hash = generateFileHash(fs.readFileSync(finalPath));
+      
+      // Upload to S3
+      const { s3Key, metadata } = await uploadFileToS3({
+        buffer: fs.readFileSync(finalPath),
+        originalname: fileName,
+        mimetype: mimeType,
+        size: parseInt(fileSize)
+      } as Express.Multer.File, req.user!._id.toString());
       
       const file = new File({
         name: fileName,
         originalName: fileName,
         mimeType,
         size: parseInt(fileSize),
-        path: finalPath,
+        s3Key: s3Key,
         hash,
         owner: req.user!._id
       });

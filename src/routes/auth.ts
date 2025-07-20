@@ -466,4 +466,69 @@ router.post('/logout', authenticate, (req, res) => {
   });
 });
 
+// @route   PUT /api/auth/update-plan
+// @desc    Update user subscription plan
+// @access  Private
+router.put('/update-plan', authenticate, asyncHandler(async (req: AuthRequest, res) => {
+  const { plan } = req.body;
+
+  if (!plan || !['free', 'pro', 'enterprise'].includes(plan)) {
+    res.status(400).json({
+      success: false,
+      message: 'Invalid plan. Must be one of: free, pro, enterprise'
+    });
+    return;
+  }
+
+  const user = await User.findById(req.user?._id);
+  if (!user) {
+    res.status(404).json({
+      success: false,
+      message: 'User not found'
+    });
+    return;
+  }
+
+  // Update subscription
+  user.subscription.plan = plan;
+  user.subscription.status = 'active';
+  user.subscription.startDate = new Date();
+  
+  // Set end date based on plan (for demo purposes, set to 1 year from now)
+  const endDate = new Date();
+  endDate.setFullYear(endDate.getFullYear() + 1);
+  user.subscription.endDate = endDate;
+
+  // Update features based on plan
+  const planFeatures = {
+    free: ['basic_upload', 'basic_download'],
+    pro: ['basic_upload', 'basic_download', 'advanced_upload', 'custom_expiry', 'password_protection', 'unlimited_storage'],
+    enterprise: ['basic_upload', 'basic_download', 'advanced_upload', 'custom_expiry', 'password_protection', 'unlimited_storage', 'team_management', 'analytics', 'api_access']
+  };
+  user.subscription.features = planFeatures[plan as keyof typeof planFeatures];
+
+  // Update storage limit based on plan
+  user.storage.limit = User.getStorageLimit(plan);
+
+  await user.save();
+
+  res.json({
+    success: true,
+    message: `Plan updated to ${plan} successfully`,
+    data: {
+      user: {
+        _id: user._id,
+        email: user.email,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        isEmailVerified: user.isEmailVerified,
+        subscription: user.subscription,
+        storage: user.storage,
+        settings: user.settings
+      }
+    }
+  });
+}));
+
 export default router; 

@@ -9,7 +9,7 @@ import { AuthRequest } from '../types';
 import jwt from 'jsonwebtoken';
 import { Collection } from '../models/File';
 import archiver from 'archiver';
-import { createDecryptionStream } from '../middleware/upload';
+import S3Service from '../utils/s3';
 
 const router = express.Router();
 
@@ -64,7 +64,7 @@ router.get('/:fileId', optionalAuth, asyncHandler(async (req: AuthRequest, res) 
   }
 
   // Check access permissions
-  const isOwner = req.user && req.user._id.toString() === file.owner._id.toString();
+  const isOwner = req.user && req.user._id?.toString() === (typeof file.owner === 'string' ? file.owner : file.owner._id?.toString());
   const isPublic = file.permissions.public;
 
   if (!isOwner && !isPublic) {
@@ -84,40 +84,37 @@ router.get('/:fileId', optionalAuth, asyncHandler(async (req: AuthRequest, res) 
     }
   }
 
-  // Check if file exists on disk
-  if (!fs.existsSync(file.path)) {
+  // Check if file exists in S3
+  const fileExists = await S3Service.fileExists(file.s3Key);
+  if (!fileExists) {
     return res.status(404).json({
       success: false,
-      message: 'File not found on server'
+      message: 'File not found in storage'
     });
   }
-
-  // Get file stats
-  const stats = fs.statSync(file.path);
-
-  // Set headers
-  res.setHeader('Content-Type', file.mimeType);
-  res.setHeader('Content-Length', stats.size);
-  res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
-  res.setHeader('Cache-Control', 'no-cache');
 
   // Update download count
   await file.updateDownloadCount();
 
-  // Stream file
-  const fileStream = fs.createReadStream(file.path);
-  fileStream.pipe(res);
+  try {
+    // Download and decrypt file from S3
+    const { buffer, metadata } = await S3Service.downloadFile(file.s3Key);
 
-  // Handle errors
-  fileStream.on('error', (error) => {
-    console.error('File stream error:', error);
-    if (!res.headersSent) {
+    // Set headers
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+    res.setHeader('Cache-Control', 'no-cache');
+
+    // Send file
+    res.send(buffer);
+  } catch (error) {
+    console.error('S3 download error:', error);
       res.status(500).json({
         success: false,
-        message: 'Error streaming file'
+      message: 'Error downloading file'
       });
     }
-  });
 }));
 
 // POST /api/download/share/:shareId/access
@@ -216,26 +213,17 @@ router.get('/share/:shareId', asyncHandler(async (req, res) => {
       console.error('Error creating IV buffer:', err);
       return res.status(500).json({ success: false, message: 'Failed to process encryption IV.' });
     }
-    let decipher;
+    // Download and decrypt file from S3
     try {
-      decipher = createDecryptionStream(iv);
-    } catch (err) {
-      console.error('Error creating decipher:', err);
-      return res.status(500).json({ success: false, message: 'Failed to create decryption stream.' });
-    }
-    let fileStream;
-    try {
-      fileStream = fs.createReadStream(file.path).pipe(decipher);
-      fileStream.pipe(res);
-      fileStream.on('error', (error) => {
-        console.error('File stream error:', error);
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Error streaming file' });
-        }
-      });
-    } catch (err) {
-      console.error('Error streaming or decrypting file:', err);
-      return res.status(500).json({ success: false, message: 'Error streaming or decrypting file.' });
+      const { buffer, metadata } = await S3Service.downloadFile(file.s3Key);
+      res.setHeader('Content-Type', file.mimeType);
+      res.setHeader('Content-Length', buffer.length);
+      res.setHeader('Content-Disposition', `attachment; filename="${file.originalName}"`);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.send(buffer);
+    } catch (error) {
+      console.error('S3 download error:', error);
+      return res.status(500).json({ success: false, message: 'Error downloading file' });
     }
   } else if (share.type === 'collection') {
     // Download all files in the collection as a ZIP

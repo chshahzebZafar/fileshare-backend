@@ -76,24 +76,19 @@ const shareSchema = new Schema<IShareDocument>({
   toObject: { virtuals: true }
 });
 
-// Indexes
 shareSchema.index({ owner: 1 });
 shareSchema.index({ resource: 1 });
 shareSchema.index({ 'access.type': 1 });
 shareSchema.index({ createdAt: -1 });
 
-// Virtual for share URL
 shareSchema.virtual('shareUrl').get(function() {
-  return `${process.env.FRONTEND_URL}/share/${this._id}`;
+  return `${process.env.FRONTEND_URL || 'http://localhost:3001'}/api/share/public/${this._id}`;
 });
 
-// Method to check if share is expired
 shareSchema.methods.isExpired = function(): boolean {
   if (!this.access.expiresAt) return false;
   return new Date() > this.access.expiresAt;
 };
-
-// Method to check if share can be downloaded
 shareSchema.methods.canDownload = function(): boolean {
   if (this.isExpired()) return false;
   if (this.access.maxDownloads && this.access.downloadCount >= this.access.maxDownloads) {
@@ -102,13 +97,11 @@ shareSchema.methods.canDownload = function(): boolean {
   return this.settings.allowDownload;
 };
 
-// Method to update download count
 shareSchema.methods.updateDownloadCount = async function(): Promise<void> {
   this.access.downloadCount += 1;
   await this.save();
 };
 
-// Pre-save middleware to set resource model
 shareSchema.pre('save', function(next) {
   if (this.type === 'file') {
     this.resourceModel = 'File';

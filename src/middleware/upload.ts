@@ -4,47 +4,16 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { Request, Response, NextFunction } from 'express';
 import { AuthRequest } from '../types';
+import S3Service from '../utils/s3';
 
-// Ensure upload directory exists
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
+// Ensure upload directory exists (for temporary storage before S3 upload)
+const uploadDir = process.env.UPLOAD_DIR || './temp-uploads';
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Create user-specific directory
-    const authReq = req as AuthRequest;
-    const userId = authReq.user?._id?.toString() || 'anonymous';
-    const userDir = path.join(uploadDir, userId);
-    
-    console.log('📁 Multer destination:', userDir);
-    console.log('📁 User ID:', userId);
-    
-    if (!fs.existsSync(userDir)) {
-      console.log('📁 Creating user directory:', userDir);
-      fs.mkdirSync(userDir, { recursive: true });
-    }
-    
-    cb(null, userDir);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueSuffix = crypto.randomBytes(16).toString('hex');
-    const ext = path.extname(file.originalname);
-    const name = path.basename(file.originalname, ext);
-    
-    // Sanitize filename
-    const sanitizedName = name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const finalFilename = `${sanitizedName}_${uniqueSuffix}${ext}`;
-    
-    console.log('📁 Original filename:', file.originalname);
-    console.log('📁 Generated filename:', finalFilename);
-    
-    cb(null, finalFilename);
-  }
-});
+// Configure storage for temporary files
+const storage = multer.memoryStorage(); // Use memory storage for S3 uploads
 
 // File filter function
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
@@ -159,69 +128,64 @@ export const uploadWithValidation = (fieldName: string = 'file', maxCount: numbe
       }
 
       next();
+      return;
     });
   };
 };
 
-// AES-256 encryption utilities
-const ENCRYPTION_KEY = process.env.FILE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'); // 32 bytes for AES-256
-const ALGORITHM = 'aes-256-cbc';
+// Generate file hash from buffer
+export const generateFileHash = (buffer: Buffer): string => {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+};
 
+// Clean up uploaded files on error (no longer needed with memory storage)
+export const cleanupUploadedFiles = (files: Express.Multer.File | Express.Multer.File[]) => {
+  // No cleanup needed with memory storage
+  console.log('🧹 Cleanup called (memory storage - no cleanup needed)');
+};
+
+// Upload file to S3 with encryption
+export const uploadFileToS3 = async (
+  file: Express.Multer.File,
+  userId: string,
+  folder?: string
+): Promise<{ s3Key: string; metadata: any }> => {
+  try {
+    // Upload to S3
+    const result = await S3Service.uploadFile(
+      file.buffer!,
+      file.originalname,
+      file.mimetype,
+      userId,
+      folder
+    );
+
+    return {
+      s3Key: result.key,
+      metadata: result.metadata
+    };
+  } catch (error) {
+    console.error('S3 upload error:', error);
+    throw new Error(`Failed to upload file to S3: ${error}`);
+  }
+};
+
+// Legacy functions for backward compatibility (deprecated)
 export function createEncryptionStream() {
+  console.warn('createEncryptionStream is deprecated - use S3Service instead');
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(process.env.FILE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'), 'hex'), iv);
   return { cipher, iv };
 }
 
 export function createDecryptionStream(iv: Buffer) {
-  const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+  console.warn('createDecryptionStream is deprecated - use S3Service instead');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(process.env.FILE_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex'), 'hex'), iv);
   return decipher;
 }
 
-// Exported async function for file encryption
 export async function encryptFileOnDisk(filePath: string): Promise<{ iv: string }> {
-  const tempPath = filePath + '.enc';
-  const { cipher, iv } = createEncryptionStream();
-  return new Promise((resolve, reject) => {
-    const input = fs.createReadStream(filePath);
-    const output = fs.createWriteStream(tempPath);
-    input.pipe(cipher).pipe(output);
-    output.on('finish', () => {
-      fs.unlinkSync(filePath);
-      fs.renameSync(tempPath, filePath);
-      resolve({ iv: iv.toString('hex') });
-    });
-    output.on('error', reject);
-  });
-}
-
-// Generate file hash
-export const generateFileHash = (filePath: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    
-    stream.on('data', (data) => {
-      hash.update(data);
-    });
-    
-    stream.on('end', () => {
-      resolve(hash.digest('hex'));
-    });
-    
-    stream.on('error', (error) => {
-      reject(error);
-    });
-  });
-};
-
-// Clean up uploaded files on error
-export const cleanupUploadedFiles = (files: Express.Multer.File | Express.Multer.File[]) => {
-  const fileArray = Array.isArray(files) ? files : [files];
-  
-  fileArray.forEach(file => {
-    if (fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-  });
-}; 
+  console.warn('encryptFileOnDisk is deprecated - use S3Service instead');
+  // This function is kept for backward compatibility but should not be used
+  return { iv: crypto.randomBytes(16).toString('hex') };
+} 

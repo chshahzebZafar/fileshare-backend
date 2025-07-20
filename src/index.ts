@@ -104,7 +104,7 @@ app.use(errorHandler);
 // Database connection
 const connectDB = async () => {
   try {
-    const mongoURI = process.env.MONGODB_URI || 'mongodb://localhost:27017/ransfer-inspired';
+    const mongoURI = "mongodb+srv://shahzaibzafar093:0ZyD1wVi7M671G4x@cluster0.4okwsqq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
     await mongoose.connect(mongoURI);
     console.log('✅ MongoDB connected successfully');
   } catch (error) {

@@ -6,6 +6,7 @@ import Folder from '../models/Folder';
 import { authenticate } from '../middleware/auth';
 import { asyncHandler } from '../middleware/errorHandler';
 import { AuthRequest } from '../types';
+import S3Service from '../utils/s3';
 
 const router = express.Router();
 
@@ -199,9 +200,12 @@ router.delete('/:fileId', authenticate, asyncHandler(async (req: AuthRequest, re
     });
   }
 
-  // Delete file from disk
-  if (fs.existsSync(file.path)) {
-    fs.unlinkSync(file.path);
+  // Delete file from S3
+  try {
+    await S3Service.deleteFile(file.s3Key);
+  } catch (error) {
+    console.error('Failed to delete file from S3:', error);
+    // Continue with database deletion even if S3 deletion fails
   }
 
   // Delete from database
@@ -240,9 +244,14 @@ router.post('/bulk-delete', authenticate, asyncHandler(async (req: AuthRequest, 
 
   for (const file of files) {
     try {
-      if (fs.existsSync(file.path)) {
-        fs.unlinkSync(file.path);
+      // Delete file from S3
+      try {
+        await S3Service.deleteFile(file.s3Key);
+      } catch (s3Error) {
+        console.error('Failed to delete file from S3:', s3Error);
+        // Continue with database deletion even if S3 deletion fails
       }
+      
       await file.deleteOne();
       deletedFiles.push(file._id);
     } catch (error) {
